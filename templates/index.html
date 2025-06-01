@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Universal PDF Converter</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #2d3748; } /* slate-800 */
+        ::-webkit-scrollbar-thumb { background: #4a5568; border-radius: 4px; } /* slate-600 */
+        ::-webkit-scrollbar-thumb:hover { background: #718096; } /* slate-500 */
+
+        .gradient-border {
+            padding: 3px;
+            background: linear-gradient(to right, #6366f1, #ec4899, #f59e0b);
+            border-radius: 0.75rem; /* rounded-xl */
+        }
+        /* Drag and drop area styling */
+        #drop-zone {
+            border: 2px dashed #4a5568; /* slate-600 */
+            border-radius: 0.5rem; /* rounded-lg */
+            padding: 2.5rem; /* p-10 */
+            text-align: center;
+            cursor: pointer;
+            transition: background-color 0.2s ease-in-out, border-color 0.2s ease-in-out;
+        }
+        #drop-zone.dragover {
+            background-color: #4a5568; /* slate-600 */
+            border-color: #718096; /* slate-500 */
+        }
+        .format-tag {
+            display: inline-block;
+            padding: 0.125rem 0.5rem;
+            font-size: 0.75rem;
+            border-radius: 0.25rem;
+            margin-left: 0.5rem;
+            vertical-align: middle;
+        }
+        .tag-stable { background-color: #34d399; color: #065f46; } /* green */
+        .tag-experimental { background-color: #f59e0b; color: #78350f; } /* amber */
+        .tag-requires_pandoc { background-color: #60a5fa; color: #1e40af; } /* blue */
+        .tag-requires_java { background-color: #f472b6; color: #831843; } /* pink */
+        .tag-not_supported, .tag-disabled_pandoc, .tag-disabled_java { background-color: #ef4444; color: #7f1d1d; } /* red */
+
+        select option[disabled] {
+            color: #718096; /* slate-500 */
+            background-color: #2d3748; /* slate-800, slightly darker for disabled */
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col items-center justify-center p-4 selection:bg-indigo-500 selection:text-white">
+
+    <div class="gradient-border w-full max-w-2xl">
+        <div class="bg-slate-800 p-6 sm:p-10 rounded-xl shadow-2xl">
+            <header class="mb-8 text-center">
+                <h1 class="text-4xl sm:text-5xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 via-pink-400 to-amber-400 mb-2">
+                    Universal PDF Converter
+                </h1>
+                <p class="text-slate-400 text-lg">Convert your PDFs to a multitude of formats.</p>
+            </header>
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    <div class="mb-6 space-y-3">
+                    {% for category, message in messages %}
+                        <div class="p-4 rounded-md text-sm
+                            {% if category == 'error' %} bg-red-600/30 text-red-300 border border-red-500/40
+                            {% elif category == 'success' %} bg-green-600/30 text-green-300 border border-green-500/40
+                            {% elif category == 'warning' %} bg-yellow-600/30 text-yellow-300 border border-yellow-500/40
+                            {% else %} bg-blue-600/30 text-blue-300 border border-blue-500/40
+                            {% endif %}">
+                            {{ message }}
+                        </div>
+                    {% endfor %}
+                    </div>
+                {% endif %}
+            {% endwith %}
+
+            <form method="POST" enctype="multipart/form-data" class="space-y-6" id="upload-form">
+                <div>
+                    <label for="pdf_file_input" class="block text-sm font-medium text-slate-300 mb-2">Choose PDF file or drag & drop:</label>
+                    <div id="drop-zone">
+                        <input type="file" name="pdf_file" id="pdf_file_input" accept=".pdf" required
+                               class="sr-only"> <!-- Screen reader only, visual part handled by drop-zone -->
+                        <p id="drop-zone-text" class="text-slate-400">Drag & drop PDF here, or click to select</p>
+                        <p id="file-name-display" class="text-indigo-400 mt-1 text-sm"></p>
+                    </div>
+                </div>
+
+                <div>
+                    <label for="output_format" class="block text-sm font-medium text-slate-300 mb-1">Convert to:</label>
+                    <select name="output_format" id="output_format" required
+                            class="w-full p-3 bg-slate-700 border border-slate-600 text-slate-200 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                        <option value="" class="text-slate-500">-- Select Format --</option>
+                        {% for fmt_key, fmt_details in supported_formats.items() %}
+                            <option value="{{ fmt_key }}"
+                                    {% if selected_format == fmt_key %}selected{% endif %}
+                                    {% if 'disabled' in fmt_details.status or 'not_supported' in fmt_details.status %}disabled{% endif %}
+                                    class="text-slate-200">
+                                {{ fmt_details.name }}
+                                {% if fmt_details.status == 'experimental' %} <span class="text-yellow-400 text-xs">(Experimental)</span>
+                                {% elif fmt_details.status == 'requires_pandoc' %} <span class="text-blue-400 text-xs">(Pandoc)</span>
+                                {% elif fmt_details.status == 'requires_java' %} <span class="text-pink-400 text-xs">(Java/Tables)</span>
+                                {% elif fmt_details.status == 'requires_pandoc_calibre' %} <span class="text-yellow-400 text-xs">(Pandoc+Calibre, Exp.)</span>
+                                {% elif fmt_details.status == 'disabled_pandoc' %} <span class="text-red-400 text-xs">(Pandoc Missing)</span>
+                                {% elif fmt_details.status == 'disabled_java' %} <span class="text-red-400 text-xs">(Java/Tabula Missing)</span>
+                                {% elif fmt_details.status == 'not_supported' %} <span class="text-red-400 text-xs">(Not Supported)</span>
+                                {% endif %}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div>
+                    <button type="submit"
+                            class="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-800 focus:ring-indigo-500 transition-all duration-150 ease-in-out transform hover:scale-105">
+                        Convert File
+                    </button>
+                </div>
+            </form>
+
+            {% if download_file %}
+            <div class="mt-10 p-6 bg-slate-700/50 rounded-lg shadow-md border border-slate-600">
+                <h3 class="text-xl font-semibold text-slate-200 mb-3">Conversion Result:</h3>
+                <p class="text-sm text-slate-400">
+                    <strong>Original:</strong> <span class="text-slate-300">{{ original_filename }}</span>
+                </p>
+                <p class="text-sm text-slate-400">
+                    <strong>Converted:</strong> <span class="text-slate-300">{{ download_file }}</span>
+                </p>
+                <a href="{{ url_for('download', filename=download_file) }}"
+                   class="mt-4 inline-block w-full text-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-800 focus:ring-green-500 transition-all duration-150 ease-in-out">
+                    Download Converted File
+                </a>
+            </div>
+            {% endif %}
+
+            <footer class="mt-10 text-center text-sm text-slate-500">
+                <p id="copyright-year">© Your PDF Converter. All rights reserved.</p>
+            </footer>
+        </div>
+    </div>
+
+    <script>
+        // Update copyright year automatically
+        document.getElementById("copyright-year").innerHTML = `© ${new Date().getFullYear()} Your PDF Converter. All rights reserved.`;
+
+        // Drag and drop functionality
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('pdf_file_input');
+        const dropZoneText = document.getElementById('drop-zone-text');
+        const fileNameDisplay = document.getElementById('file-name-display');
+
+        // Click on drop zone to trigger file input
+        dropZone.addEventListener('click', () => fileInput.click());
+
+        // Handle file selection via input
+        fileInput.addEventListener('change', (e) => {
+            if (fileInput.files.length > 0) {
+                handleFile(fileInput.files[0]);
+            }
+        });
+
+        // Drag over styling
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        // Drag leave styling
+        dropZone.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+        });
+
+        // Handle dropped files
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                if (files[0].type === "application/pdf") {
+                    fileInput.files = files; // Assign dropped files to the input
+                    handleFile(files[0]);
+                } else {
+                    fileNameDisplay.textContent = 'Error: Please drop a PDF file.';
+                    fileNameDisplay.classList.add('text-red-400');
+                    fileInput.value = ''; // Clear any previously selected file
+                }
+            }
+        });
+
+        // Update UI when file is selected
+        function handleFile(file) {
+            fileNameDisplay.textContent = `Selected: ${file.name}`;
+            fileNameDisplay.classList.remove('text-red-400');
+            fileNameDisplay.classList.add('text-indigo-400');
+            dropZoneText.textContent = 'PDF Selected. Change or drop another:';
+        }
+    </script>
+</body>
+</html>

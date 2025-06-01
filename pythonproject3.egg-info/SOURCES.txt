@@ -1,0 +1,7 @@
+app.py
+pyproject.toml
+setup.py
+pythonproject3.egg-info/PKG-INFO
+pythonproject3.egg-info/SOURCES.txt
+pythonproject3.egg-info/dependency_links.txt
+pythonproject3.egg-info/top_level.txt
